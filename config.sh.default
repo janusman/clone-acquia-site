@@ -1,0 +1,21 @@
+# Edit this configuration and save it as config.sh
+# Below are some Dev Desktop defaults
+
+# DB user and password
+dbuser=EDITME
+dbpassword=EDITME
+
+#command to reload your local Apache.
+reload_apache_command="/Applications/Dev Desktop/apache/bin/apachectl restart" 
+
+#Where the new site folder (including repo, DB and logs) will get created.
+dest_dir=~/Sites
+
+#vhosts config file for your local Apache
+vhosts_path=/Applications/Dev\ Desktop/apache/conf/vhosts.conf 
+
+#Full path to your drush shell executable
+drush=/Applications/Dev\ Desktop/drush/drush  
+
+#Flag to convert dumped InnoDB tables be MyISAM locally (much faster import)
+innodb_to_myisam=1
