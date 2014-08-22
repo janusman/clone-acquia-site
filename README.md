@@ -1,7 +1,11 @@
-Clones an acquia site locally using aht and your local AMP stack.
+Clones an acquia site locally using aht and your local AMP stack. Some things it does:
 
-Additionally, it creates a skeleton project within the docroot so you can load
-the site into PHPStorm, with the run configuration ready to go (for debugging).
+* checks out the code repo
+* copies the latest daily DB backup locally
+* creates the /etc/hosts and vhosts entry
+* optionally converts some DB tables into MyISAM for ~3x quicker import, and sanitizes the user data
+* it creates a skeleton PHPStorm project within the docroot with the necessary run configuration for debugging
+* automatically disables a few access control modules (like shield) and sets apachesolr read-only mode to avoid accidents
 
 # Installation
 
