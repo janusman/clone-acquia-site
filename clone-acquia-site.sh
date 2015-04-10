@@ -31,7 +31,9 @@ fi
 source $clone_command_folder/functions.sh
 
 # Defaults
-sitefolder=default #Site folder you are targetting.
+#site_folder=default #Site folder you are targetting.
+table_prefix=""
+skip_data_tables=2t283762uhqweuyqweouyqwoeuy # Random never-ever-matching tablename
 
 # BEGIN!
 # Get options
@@ -52,9 +54,6 @@ do
   # Long options
     --help)
       HELP=1
-      ;;
-    --uri=*)
-      URI=$1
       ;;
     --mc)
       STAGE=$1
@@ -77,11 +76,19 @@ do
       echo "  Skipping InnoDB -> MyISAM conversion"
       innodb_to_myisam=0
       ;;
-    --site-folder=*)
-      sitefolder=`echo $1 |cut -f2- -d=`
-      echo "  Using sitefolder $sitefolder"
+    --myisam-latin-charset)
+      echo "  Enabled latin1 conversion during InnoDB -> MyISAM conversion"
+      myisam_latin_charset=1
       ;;
-    --site-db=*)
+    --uri=*)
+      uri=`echo $1 |cut -f2- -d=`
+      echo " Using uri $uri"
+      ;;
+    --site-folder=*)
+      site_folder=`echo $1 |cut -f2- -d=`
+      echo "  Using site folder $site_folder"
+      ;;
+    --ac-db-name=*)
       ac_db_name=`echo $1 |cut -f2- -d=`
       echo "  Using remote Database $ac_db_name"
       ;;
@@ -96,6 +103,14 @@ do
     --local-dbfile=*)
       local_dbfile=`echo $1 |cut -f2- -d=`
       echo "  Using localdbfile $local_dbfile"
+      ;;
+    --table-prefix=*)
+      table_prefix=`echo $1 |cut -f2- -d=`
+      echo "  Using table-prefix $table_prefix"
+      ;;
+    --skip-data-tables=*)
+      skip_data_tables=`echo $1 |cut -f2- -d=`
+      echo "  Skipping data import of tables matching $skip_data_tables"
       ;;
     --delete)
       delete_site=1;
@@ -117,46 +132,57 @@ do
   #    continue
   #    ;;
 
-  # Done with options. Remaining arguments are now in $1, $2 etc.
-    *)
-      break
+  # Done with options, the sitename comes last.
+    @*)
+      SITENAME=$1
       ;;
   esac
 
   shift
 done
 
+if [ ${SITENAME:-x} = x ]
+then
+  HELP=1
+fi
 
-# Check the arguments!
-sitename=${1:-x}
-env=${2:-x}
-ac_db_name=${ac_db_name:-${sitename}}
-if [ $sitename = x -o $env = x -o ${HELP:-x} = 1 ]
+if [ ${HELP:-x} = 1 ]
 then
   cat <<EOF
 USAGE: $0 sitename env
 
 Clones a site locally. Usage:
-  clone-acquia-mc-site.sh [options] sitename env
+  clone-acquia-mc-site.sh [options] @SITENAME.ENV
 Options:
   -h or --help          : Shows this help text and exits.
   --mc  or  --dc        : Force devcloud/managed cloud site.
   --skip-repo           : Skip repo checkout
   --skip-db             : Skip DB download/creation
+  --uri=http://....     : Use this URI for autodetection
   --site-folder=default : name of folder within docroot/sites/* to use. Defaults to 'default'
-  --site-db=sitename    : Database name to use. Use same string as from the Acquia require line:
+  --ac-db-name=sitename    : Database name to use. Use same string as from the Acquia require line:
                             require('/var/www/site-php/[sitename]/[sitedb]-settings.inc');
                          (Defaults to the same value as the sitename argument.)
   --local-hostname=...  : Local hostname to use. Defaults to "local.[env].[sitename]"
   --local-dbname=...    : Local DB name to use.  Defaults to "local.[env].[sitename].[site-folder]"
   --local-dbfile=...    : Local DB file to use. If present, it skips downloading the DB from the site.
+  --table-prefix=...    : Define the table prefix used by the site.
   --skip-convert-myisam : Do *NOT* convert all DB tables to MyISAM (for perf. purposes)
+  --skip-data-tables=[regex] : Skip data import of table names that match the regex
+                            Example: --skip-data-tables="^(foo|bar)"  #Skip tables prefixed 'foo' or 'bar'
+  --myisam-latin-charset: Additionally to innodb->myisam conversion, convert to latin1 charset.
+                          ** DANGER: CAN CAUSE DATA LOSS OR OTHERWISE WEIRD BEHAVIOR **
+                          
   --delete              : DELETE a local site completely *** DANGER ***
 EOF
   exit
 fi
 
 # Some calculated vars
+SITENAME=`echo $SITENAME |cut -c2-`       # Trim @ from sitename
+sitename=`echo $SITENAME |cut -f1 -d'.'`  # split site/env
+env=`echo $SITENAME |cut -f2 -d'.'`       # split site/env
+ac_db_name=${ac_db_name:-${sitename}}
 hostname=${local_hostname:-local.${env}.${sitename}}
 dbname=${local_dbname:-${hostname}.${ac_db_name}}
 dest_dir_site=${dest_dir}/${hostname}
@@ -230,7 +256,7 @@ then
   if [ -d $dest_dir_site ]
   then
     echo "Removing site folder at $dest_dir_site ..."
-    rm -rf $dest_dir_site
+    sudo rm -rf $dest_dir_site
     echo "  Done."
   else
     echo "Warning: Could not find folder at $dest_dir_site!"
@@ -315,7 +341,7 @@ fi
 # Check that needed commands exist and are executable.
 path_ok=1
 #   Loop thru commands
-for command in mysql pv
+for command in mysql $reload_apache_command
 do
   which $command >/dev/null 2>&1
   if [ $? -gt 0 ]
@@ -334,12 +360,12 @@ then
   exit 1
 fi
 
-# ERROR when /var/www/site-php/${sitename} already exists
+# WARN when /var/www/site-php/${sitename} already exists
 if [ -r /var/www/site-php/${sitename} ]
 then
-  echo "ERROR: /var/www/site-php/${sitename} exists and points here:"
+  echo "WARNING: /var/www/site-php/${sitename} exists and points here:"
   ls -l /var/www/site-php/${sitename} 
-  exit 1
+  #exit 1
 fi
 
 
@@ -351,10 +377,10 @@ then
   echo "  http://${hostname}/"
 fi
 
-if [ ${sitefolder:-x} = x ]
+if [ ${site_folder:-x} = x ]
 then
   # Check sitename/env exists!
-  ahtaht sites >$tmpout
+  ahtaht application:sites >$tmpout
   if [ $? -gt 0 ]
   then
     echo "ERROR: aht could not find the site/environment using: aht @${sitename}.${env}"
@@ -364,12 +390,33 @@ then
   # Warning if this looks like a multisite Drupal site.
   if [ `grep -c . $tmpout` -gt 1 ]
   then
-    echo "WARNING: this site has various sites/* folders, but you specified none with the --sitefolder=xxx option."
-    echo "  ${sitename}.${env} currently has these sites:"
-    cat $tmpout |awk '{ print "    " $0 }'
-    echo ""
-    read -p "HIT [ENTER] TO CONTINUE; THE SCRIPT WILL ASSUME THE 'default' SITE FOLDER" foo
+    # If we have a --uri, try to get it from there.
+    if [ ${uri:-x} != x ]
+    then
+      site_folder=`ahtaht drush status --uri=$uri |grep "Site path" |awk '{ print $4 }' |cut -f2 -d/`
+      echo "NOTE: This site has various sites/* folders, but using --uri=$uri the '$site_folder' folder was detected."
+    else
+      echo "WARNING: this site has various sites/* folders, but you specified none with the --site-folder=xxx option."
+      echo "  ${sitename}.${env} currently has these sites:"
+      cat $tmpout |awk '{ print "    " $0 }'
+      echo ""
+      read -p "Type a site folder from above, or just hit [Enter] to use the 'default' folder: " foo
+      site_folder=${foo:-default}
+    fi
+  else
+    site_folder=default
   fi
+  
+  echo ""
+  echo "Autodetecting DB name..."
+  uriarg="${uri:-$site_folder}"
+  internal_db_name=`ahtaht drush status --uri=$uriarg | grep "Database name" |awk '{print $4}'`
+  ac_db_name=`ahtaht db:list |awk '$2 == "'$internal_db_name'" { print $1 }'`
+  dbname=${local_dbname:-${hostname}.${ac_db_name}}
+  echo "  AC DB: $ac_db_name (Internal name: $internal_db_name)"
+  echo "  Local DBname: '$dbname'"
+  echo "Done!"
+  echo ""
 fi
 
 #
@@ -383,13 +430,15 @@ date=`date`
 cat <<EOF >clone-site-args.txt
 # These are the arguments used to call the clone-acquia-mc-site.sh script
 # Generated on $date 
-URI=$URI
-STAGE=$STAGE
-sitefolder=$sitefolder
-ac_db_name=$ac_db_name
-local_hostname=$local_hostname
-local_dbname=$local_dbname
-local_dbfile=$local_dbfile
+$0 $SITENAME
+  --uri=$uri
+  --STAGE=$STAGE
+  --site-folder=$site_folder
+  --ac-db-name=$ac_db_name
+  --local-hostname=$local_hostname
+  --local-dbname=$local_dbname
+  --local-dbfile=$local_dbfile
+  --skip-data-tables=$skip_data_tables
 EOF
 
 # Clone the repository
@@ -454,11 +503,11 @@ then
   if [ ${local_dbfile:-x} = x ]
   then
     echo "Getting database..."
-    ahtaht db-backups-get --latest --database=$ac_db_name >$tmpscript
+    ahtaht db:backup-get --latest --database=$ac_db_name >$tmpscript
     if [ $? -gt 0 ]
     then
       echo "ERROR: Could not find database '$ac_db_name'"
-      echo "  Please specify a correct one using --sitedb=[dbname]"
+      echo "  Please specify a correct one using --ac-db-name=[dbname]"
       exit 1
     fi
     cat $tmpscript |tr -d '\015' >$tmpscript2
@@ -470,6 +519,7 @@ then
     echo "  DB filename: $dbfilename"
     echo "  Rsync script from $tmpscript:"
     cat $tmpscript2 | awk '{ print "    " $0 }'
+    echo ""
     
     # Sync it!!
     echo "  ryncing the DB file..."
@@ -494,12 +544,12 @@ then
   mysqladmin -u$dbuser --password=$dbpassword create $dbname 2>/dev/null
   if [ $? -gt 0 ]
   then
-    echo "Error! Could not create database $dbname"
+    echo "Error! Could not run mysqladmin create for database $dbname"
     exit 1
   fi
   # Import the database, skipping some data:
   echo "  Starting DB import..."
-  pv -p $dbfilename |gzip -d -c | awk -F'`' '
+  gzip -d -c $dbfilename | awk -F'`' '
 NR==1 { 
   # http://superuser.com/questions/246784/how-to-tune-mysql-for-restoration-from-mysql-dump
   # TODO? http://www.palominodb.com/blog/2011/08/02/mydumper-myloader-fast-backup-and-restore ?
@@ -513,32 +563,35 @@ NR==1 {
   start_of_line=substr($0,1,200);
   # Detect beginning of table structure definition.
   if (index(start_of_line, "-- Table structure for table")==1) {
+    print "" >"/dev/stderr"
     output=1
     print "COMMIT;"
     print "SET autocommit=0;"
     current_db=$2    ## before, it was start_of_line
+    printf " Processing table {" current_db "}"> "/dev/stderr"
   }
   # Switch the engine from InnoDB to MyISAM : MUCHO FAST. 
   if (substr(start_of_line,1,8)==") ENGINE" && '${innodb_to_myisam:-0}' == 1) {
-    if (current_db ~ /^(locales_source|locales_target|menu_links|workbench_scheduler_types)/) {
-      print "Skipping InnoDB -> MyISAM for " current_db >"/dev/stderr"
+    if (current_db ~ /^'${table_prefix}'(locales_source|locales_target|menu_links|redirect|registry|registry_file|revision_scheduler|search_node_links|workbench_scheduler_types)/) {
+      printf " ... Skipping InnoDB -> MyISAM for " current_db >"/dev/stderr"
     } else {
       gsub(/=InnoDB/, "=MyISAM", $0);
-      gsub(/CHARSET=utf8/, "CHARSET=latin1", $0);
+      if ('${myisam_latin_charset:-0}' == 1) {
+        gsub(/CHARSET=utf8/, "CHARSET=latin1", $0);
+      }
     }
   }
   # Detect beginning of table data dump.
   if (index(start_of_line, "-- Dumping data for table")==1) {
     if (current_db != $2) {
-      print "Internal problem: unexpected data, seems to come from table " $2 " whereas expected table " current_db;
+      printf "Internal problem: unexpected data, seems to come from table " $2 " whereas expected table " current_db >"/dev/stderr";
       current_db=$2
     }
-    printf "\r Processing table " current_db > "/dev/stderr"
     output=1
     # Skip data in some tables
-    if (current_db ~ /^(__ACQUIA_MONITORING|accesslog|batch|cache|cache_.*|history|queue|search_index|search_dataset|search_total|sessions|watchdog|boost_cache|panels_hash_database_cache|migrate_.*)$/) {
+    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|migrate_.*|panels_hash_database_cache|queue|search_index|search_dataset|search_total|sessions|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
       output=0
-      print "... Skipping Data import (imported structure only) for " current_db >"/dev/stderr"
+      printf " ... Skipping Data import (imported structure only) for " current_db >"/dev/stderr"
     }
   }
   if (output==1) {
@@ -552,7 +605,9 @@ END {
   if [ $? -gt 0 ]
   then
     echo "Error! Could not import data into database $dbname"
-    echo "  If you got a 'Key too long' error, try running again using the --skip-convert-myisam flag"
+    echo "  If you got a 'Key too long' error, try running again using these flags:"
+    echo "   --myisam-latin-charset"
+    echo "   --skip-convert-myisam"
     exit 1
   fi
   
@@ -571,17 +626,19 @@ else
 fi
 
 # Get some variables
-docroot=`pwd`"/$repofolder/docroot"
-sitefolderpath="${docroot}/sites/${sitefolder}"
+docroot="${dest_dir_site}/${repofolder}/docroot"
+sitefolderpath="${docroot}/sites/${site_folder}"
 if [ ! -r $sitefolderpath ]
 then
-  echo "ERROR: Could not find the '${sitefolder}' site folder at $sitefolderpath"
+  echo "ERROR: Could not find the '${site_folder}' site folder at $sitefolderpath"
   exit 1
 fi
 
 
-add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $sitefolder $dbuser $dbpassword $sitename $ac_db_name 
+echo "add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $site_folder $dbuser $dbpassword $sitename $ac_db_name $table_prefix"
+add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $site_folder $dbuser $dbpassword $sitename $ac_db_name $table_prefix
 
+echo "add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname"
 add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname
 
 # Create and allow writing to new php-errors.log
@@ -619,6 +676,7 @@ echo ""
 echo "Reconfiguring site using drush"
 cd $sitefolderpath
 $drush status >/dev/null 2>&1
+drush_ran=0
 if [ $? -gt 0 ]
 then
   echo "  WARNING: Drush failed to run!"
@@ -626,13 +684,29 @@ else
   #
   # Issue some drush commands
   #
-  modules_to_disable="memcache memcache_admin securelogin shield securepages"
+  #modules_to_disable="memcache memcache_admin securelogin shield securepages"
+  modules_to_disable="securelogin shield securepages"
   echo "  Disabling some modules: $modules_to_disable"
   $drush dis -y $modules_to_disable
-  echo "  Activating user 1 in case it's disabled"
+  echo ""
+  echo "  Activating user 1 in case it is disabled"
   echo "UPDATE users SET status=1 WHERE uid=1" | $drush sql-cli
   echo "  Done!"
+  drush_ran=1
 fi
+echo ""
+
+#
+# Add a sites.php entry
+#
+echo "Adding sites.php entry: $hostname => $site_folder"
+# If file doesn't exist, create it!
+if [ ! -r $docroot/sites/sites.php ]
+then
+  echo "<?php" >$docroot/sites/sites.php
+fi
+echo "## ADDED BY $0" >>$docroot/sites/sites.php
+echo "\$sites['$hostname'] = '$site_folder';" >>$docroot/sites/sites.php
 echo ""
 
 #
@@ -649,8 +723,12 @@ then
   else
     DRUPAL_VERSION=6
   fi
+  settings_filename=${ac_db_name}-settings.inc
+  settings_filepath=$dest_dir_site/${settings_filename}
   cd $docroot/.idea
-  cat workspace.xml |sed -e "s/{{DRUPAL_VERSION}}/$DRUPAL_VERSION/" >$tmpout && cp $tmpout workspace.xml
+  cat workspace.xml |sed \
+    -e "s/{{DRUPAL_VERSION}}/$DRUPAL_VERSION/"\
+    -e "s/{{VAR_WWW_PHP_SETTINGS_FILENAME}}/$settings_filename/" >$tmpout && cp $tmpout workspace.xml
   cat deployment.xml | sed -e "s%{{SITE_URL}}%$hostname%" >$tmpout && cp $tmpout deployment.xml
   echo "  Done!"
   echo "  You can open the project directly in PhpStorm by running:"
@@ -668,14 +746,18 @@ echo ""
 # Bonus points:
 # Get ULI location
 #
-uli=`$drush uli --uri=$hostname`
-if [ $? -eq 0 ]
+if [ $drush_ran -eq 1 ]
 then
-  echo "You can go to the admin account here:"
-  echo "  $uli"
-else
-  echo "Could not get one-time login link via drush :("
+  uli=`$drush uli --uri=$hostname`
+  if [ $? -eq 0 ]
+  then
+    echo "You can go to the admin account here:"
+    echo "  $uli"
+  else
+    echo "Could not get one-time login link via drush :("
+  fi
 fi
+echo ""
 echo "Site located here:"
 echo "   On disk: $dest_dir_site"
 echo "  Via http: http://$hostname/"
