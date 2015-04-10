@@ -85,6 +85,7 @@ function add_varwwwsitephp() {
   sitefolder=${5:-default} #folder within sites/[sitefolder]
   dbuser=${6:-root}
   dbpassword=${7}
+  table_prefix=${10}
 
   tmpout=/tmp/tmp$$.1
   settings=$docroot/sites/$sitefolder/settings.php
@@ -117,7 +118,7 @@ function add_varwwwsitephp() {
  */
 
 // Connection to local DB.
-// D7 Version
+// D7 and D8 Version
 \$databases['default']['default'] = array(
   'driver' => 'mysql',
   'database' => '$dbname',
@@ -125,8 +126,9 @@ function add_varwwwsitephp() {
   'password' => '$dbpassword',
   'host' => 'localhost',
   'port' => 3306,
-  #'prefix' => 'main_', #TODO
+  'prefix' => '$table_prefix',
   'collation' => 'utf8_general_ci',
+  'namespace' => 'Drupal\\Core\\Database\\Driver\\mysql',  #D8
 );
 // D6 Version
 \$db_url='mysqli://$dbuser:$dbpassword@localhost/$dbname';
@@ -163,7 +165,7 @@ ini_set('display_startup_errors', TRUE);
 ####################
 # Memcache stuff::
 # - Set the key to something sane for your local memcache.
-\$conf['memcache_key_prefix'] = '${hostname}_';
+\$conf['memcache_key_prefix'] = '${dbname}';
 
 # To DISABLE memcahe on a site that already has it, uncomment the following:
 #unset(\$conf['cache_inc']);
@@ -173,6 +175,16 @@ ini_set('display_startup_errors', TRUE);
 #\$conf['cache_default_class'] = 'MemCacheDrupal';
 #\$conf['cache_class_cache_form'] = 'DrupalDatabaseCache';
 #####################
+
+######################
+# Connect site to another Acquia Subscription
+# Uncomment following and Call this to refresh sub:
+#   drush ev 'acquia_agent_check_subscription(); print_r(acquia_agent_get_subscription());'
+# @eeagarza 's subscription
+#\$conf['acquia_identifier'] = 'ABIR-36398';
+#\$conf['acquia_key'] = '86a93199c349139595cb17f2a04dbfa2';
+######################
+
 
 ////////////////////////////////////////////////////////////////
 
