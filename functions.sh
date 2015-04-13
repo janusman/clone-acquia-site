@@ -90,17 +90,20 @@ function add_varwwwsitephp() {
   tmpout=/tmp/tmp$$.1
   settings=$docroot/sites/$sitefolder/settings.php
   
-  if [ `grep -c "require['\"].var.www.site-php.*['\"]" $settings` -eq 1 ]
+  sitename=$8      #@[this].env, e.g. 'eeagarza'
+  ac_db_name=$9    #db name in acquia cloud, e.g. 'eeagarza'
+      
+  if [ -r $settings ]
   then
-    #Extract the sitename and ac_db_name from the existing require line
-    grep -o "require['\"].var.www.site-php.*['\"]" $settings |awk -F/ '{ print "ac_db_name=" substr($6, 1, index($6, "-")-1); print "sitename=" $5 }' >$tmpout
-    cat $tmpout
-    . $tmpout
-  else
-    sitename=$8      #@[this].env, e.g. 'eeagarza'
-    ac_db_name=$9    #db name in acquia cloud, e.g. 'eeagarza'
-  fi
-    
+    if [ `grep -c "require.*['\"].var.www.site-php.*['\"]" $settings` -eq 1 ]
+    then
+      #Extract the sitename and ac_db_name from the existing require line
+      grep -o "require.*['\"].var.www.site-php.*['\"]" $settings |awk -F/ '{ print "  ac_db_name=" substr($6, 1, index($6, "-")-1); print "  sitename=" $5 }' >$tmpout
+      echo "NOTE: Detected sitename and ac_db_name from require line in $settings:"
+      cat $tmpout
+      . $tmpout
+    fi
+  fi    
   datetime=`date +"%D %T"`
   if [ ! -r /var/www/site-php/${sitename} ]
   then

@@ -197,8 +197,14 @@ vhosts_includes_dir=$dest_dir/vhosts-config-apache #folder to place generated [h
 # TODO: Delete from /var/www/site-php/*.inc
 if [ ${delete_site:-x} = 1 ]
 then
+  # Use the clone-site-args.txt settings if available
+  if [ -r $dest_dir_site/clone-site-args.txt ]
+  then
+    echo "Found $dest_dir_site/clone-site-args.txt"
+    . $dest_dir_site/clone-site-args.txt
+  fi
   echo "Deleting site:"
-  echo "       Folder: $dest_dir"
+  echo "       Folder: $dest_dir_site"
   echo "     Database: $dbname"
   echo "  Hosts entry: $hostname"
   echo
@@ -223,7 +229,7 @@ then
   if [ `echo SHOW DATABASES |mysql |grep -c $dbname` -eq 1 ]
   then
     echo "Removing DB $dbname ..."
-    mysqladmin drop $dbname
+    mysqladmin -u$dbuser --password=$dbpassword drop $dbname
     echo "  Done."
   else
     echo "Warning: Database $dbname does not exist!"
@@ -430,15 +436,19 @@ date=`date`
 cat <<EOF >clone-site-args.txt
 # These are the arguments used to call the clone-acquia-mc-site.sh script
 # Generated on $date 
-$0 $SITENAME
-  --uri=$uri
-  --STAGE=$STAGE
-  --site-folder=$site_folder
-  --ac-db-name=$ac_db_name
-  --local-hostname=$local_hostname
-  --local-dbname=$local_dbname
-  --local-dbfile=$local_dbfile
-  --skip-data-tables=$skip_data_tables
+# Command: $0 
+SITENAME=@$SITENAME
+STAGE=$STAGE
+innodb_to_myisam=$innodb_to_myisam
+myisam_latin_charset=$myisam_latin_charset
+uri=$uri
+site_folder=$site_folder
+ac_db_name=$ac_db_name
+local_hostname=$local_hostname
+local_dbname=$local_dbname
+local_dbfile=$local_dbfile
+skip_data_tables=$skip_data_tables
+table_prefix=$table_prefix
 EOF
 
 # Clone the repository
