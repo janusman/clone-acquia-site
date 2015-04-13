@@ -341,7 +341,7 @@ fi
 # Check that needed commands exist and are executable.
 path_ok=1
 #   Loop thru commands
-for command in mysql $reload_apache_command
+for command in mysql
 do
   which $command >/dev/null 2>&1
   if [ $? -gt 0 ]
@@ -635,7 +635,7 @@ then
 fi
 
 
-echo "add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $site_folder $dbuser $dbpassword $sitename $ac_db_name $table_prefix"
+echo "add_varwwwsitephp '$dest_dir_site' '$docroot' '$dbname' '$hostname' '$site_folder' '$dbuser' '$dbpassword' '$sitename' '$ac_db_name' '$table_prefix'"
 add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $site_folder $dbuser $dbpassword $sitename $ac_db_name $table_prefix
 
 echo "add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname"

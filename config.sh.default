@@ -5,9 +5,10 @@
 dbuser=EDITME
 dbpassword=EDITME
 
-# Port for HTTPD
+# Ports for HTTPD/MySQL
 apache_http_port_number=80
 apache_https_port_number=443
+mysql_port_number=3306
 
 #command to reload your local Apache.
 reload_apache_command="/Applications/Dev Desktop/apache/bin/apachectl restart" 

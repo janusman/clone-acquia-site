@@ -22,7 +22,7 @@ function add_vhosts() {
     #cat <<EOF |tee -a $vhosts_includes_dir/$hostname.conf
     cat <<EOF >> $vhosts_includes_dir/$hostname.conf
 # Entry for $hostname, added $datetime
-<VirtualHost *:80>
+<VirtualHost *:${apache_http_port_number}>
     DocumentRoot $docroot
     ServerName $hostname
     ErrorLog "${dest_dir_site}/error.log"
@@ -31,7 +31,7 @@ function add_vhosts() {
 </VirtualHost>
 
 # SSL Version. Same except for last 3 lines starting with SSL*
-<VirtualHost *:443>
+<VirtualHost *:${apache_https_port_number}>
     DocumentRoot $docroot
     ServerName $hostname
     ErrorLog "${dest_dir_site}/error.log"
@@ -90,10 +90,10 @@ function add_varwwwsitephp() {
   tmpout=/tmp/tmp$$.1
   settings=$docroot/sites/$sitefolder/settings.php
   
-  if [ `grep -c "['\"].var.www.site-php.*['\"]" $settings` -eq 1 ]
+  if [ `grep -c "require['\"].var.www.site-php.*['\"]" $settings` -eq 1 ]
   then
     #Extract the sitename and ac_db_name from the existing require line
-    grep -o "['\"].var.www.site-php.*['\"]" $settings |awk -F/ '{ print "ac_db_name=" substr($6, 1, index($6, "-")-1); print "sitename=" $5 }' >$tmpout
+    grep -o "require['\"].var.www.site-php.*['\"]" $settings |awk -F/ '{ print "ac_db_name=" substr($6, 1, index($6, "-")-1); print "sitename=" $5 }' >$tmpout
     cat $tmpout
     . $tmpout
   else
@@ -125,7 +125,7 @@ function add_varwwwsitephp() {
   'username' => '$dbuser',
   'password' => '$dbpassword',
   'host' => 'localhost',
-  'port' => 3306,
+  'port' => $mysql_port_number,
   'prefix' => '$table_prefix',
   'collation' => 'utf8_general_ci',
   'namespace' => 'Drupal\\Core\\Database\\Driver\\mysql',  #D8
