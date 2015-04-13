@@ -148,7 +148,7 @@ ini_set('memory_limit', '256M');
 \$conf['file_temporary_path'] = '/tmp';
 
 # Fix for local domain.
-\$base_url = "http://$hostname";
+\$base_url = "http://$hostname:${apache_http_port_number}";
 \$cookie_domain = "$hostname";
 
 # Report all PHP errors
