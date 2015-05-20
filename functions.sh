@@ -95,10 +95,10 @@ function add_varwwwsitephp() {
       
   if [ -r $settings ]
   then
-    if [ `grep -c "require.*['\"].var.www.site-php.*['\"]" $settings` -eq 1 ]
+    if [ `grep -c "require.*['\"].var.www.site-php.[a-z0-9A-Z_-]*.inc['\"]" $settings` -eq 1 ]
     then
       #Extract the sitename and ac_db_name from the existing require line
-      grep -o "require.*['\"].var.www.site-php.*['\"]" $settings |awk -F/ '{ print "  ac_db_name=" substr($6, 1, index($6, "-")-1); print "  sitename=" $5 }' >$tmpout
+      grep -o "require.*['\"].var.www.site-php.[a-z0-9A-Z_-]*.inc['\"]" $settings |awk -F/ '{ print "  ac_db_name=" substr($6, 1, index($6, "-")-1); print "  sitename=" $5 }' >$tmpout
       echo "NOTE: Detected sitename and ac_db_name from require line in $settings:"
       cat $tmpout
       . $tmpout

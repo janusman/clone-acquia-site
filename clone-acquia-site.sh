@@ -416,7 +416,7 @@ then
   echo ""
   echo "Autodetecting DB name..."
   uriarg="${uri:-$site_folder}"
-  internal_db_name=`ahtaht drush status --uri=$uriarg | grep "Database name" |awk '{print $4}'`
+  internal_db_name=`ahtaht drush7 status --uri=$uriarg --pipe |php -r '$result = (array)json_decode(trim(stream_get_contents(STDIN))); print_r($result["db-name"]);'`
   ac_db_name=`ahtaht db:list |awk '$2 == "'$internal_db_name'" { print $1 }'`
   dbname=${local_dbname:-${hostname}.${ac_db_name}}
   echo "  AC DB: $ac_db_name (Internal name: $internal_db_name)"
