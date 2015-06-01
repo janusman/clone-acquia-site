@@ -334,6 +334,18 @@ then
   exit 1
 fi
 
+# Check aht works
+ahtaht site:info >$tmpout
+if [ `grep -c "Failed to establish" $tmpout` -eq 1 ]
+then
+  echo "
+ERROR: It looks like aht/bastion is down!
+"
+  cat $tmpout
+  echo ""
+  exit 1
+fi
+
 if [ ${local_dbfile:-x} != x ]
 then
   if [ ! -r $local_dbfile ]
