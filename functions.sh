@@ -86,6 +86,7 @@ function add_varwwwsitephp() {
   dbuser=${6:-root}
   dbpassword=${7}
   table_prefix=${10}
+  hash_salt=${11}
 
   tmpout=/tmp/tmp$$.1
   settings=$docroot/sites/$sitefolder/settings.php
@@ -130,11 +131,16 @@ function add_varwwwsitephp() {
   'host' => 'localhost',
   'port' => $mysql_port_number,
   'prefix' => '$table_prefix',
-  'collation' => 'utf8_general_ci',
+  #'collation' => 'utf8_general_ci',
   'namespace' => 'Drupal\\Core\\Database\\Driver\\mysql',  #D8
 );
 // D6 Version
 \$db_url='mysqli://$dbuser:$dbpassword@localhost/$dbname';
+
+// D8 stuff
+\$settings['hash_salt'] = '$hash_salt';
+\$config_directories['active'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/active';
+\$config_directories['staging'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/staging';
 
 # Force some variables so as not to wreak havok on real site!
 # Force apachesolr to be read-only!

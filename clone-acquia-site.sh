@@ -189,6 +189,7 @@ dest_dir_site=${dest_dir}/${hostname}
 tmpscript=/tmp/tmp$$.sh
 tmpscript2=/tmp/tmp$$.2.sh
 tmpout=/tmp/tmp$$.out
+tmpout2=/tmp/tmp$$.2.out
 datetime=`date +"%D %T"`
 phpstorm_idea_template_folder=$clone_command_folder/phpstorm-idea-template-folder
 vhosts_includes_dir=$dest_dir/vhosts-config-apache #folder to place generated [hostname].conf files included from apache's vhosts config.
@@ -428,11 +429,26 @@ then
   echo ""
   echo "Autodetecting DB name..."
   uriarg="${uri:-$site_folder}"
-  internal_db_name=`ahtaht drush7 status --uri=$uriarg --pipe |php -r '$result = (array)json_decode(trim(stream_get_contents(STDIN))); print_r($result["db-name"]);'`
+  ahtaht drush7 status --uri=$uriarg --pipe >$tmpout
+  # Get some vars from drush status
+  cat $tmpout |php -r '
+    $result = (array)json_decode(trim(stream_get_contents(STDIN))); 
+    echo "internal_db_name=\"" . $result["db-name"] . "\"\n";
+    echo "drupal_version=\"" . substr($result["drupal-version"], 0, 1) . "\"\n";
+  ' >$tmpout2
+  cat $tmpout2
+  . $tmpout2
   ac_db_name=`ahtaht db:list |awk '$2 == "'$internal_db_name'" { print $1 }'`
   dbname=${local_dbname:-${hostname}.${ac_db_name}}
   echo "  AC DB: $ac_db_name (Internal name: $internal_db_name)"
   echo "  Local DBname: '$dbname'"
+  # If running D8, get the hash!
+  if [ ${drupal_version} -eq 8 ]
+  then
+    echo "Running DRUPAL 8"
+    hash_salt=`aht $STAGE @$SITENAME drush7 ev --uri=$uriarg ' echo \Drupal\Core\Site\Settings::getHashSalt()'`
+    echo "--hash_salt setting is $hash_salt";
+  fi
   echo "Done!"
   echo ""
 fi
@@ -611,7 +627,7 @@ NR==1 {
     }
     output=1
     # Skip data in some tables
-    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|migrate_.*|panels_hash_database_cache|queue|search_index|search_dataset|search_total|sessions|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
+    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|panels_hash_database_cache|queue|search_index|search_dataset|search_total|sessions|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
       output=0
       printf " ... Skipping Data import (imported structure only) for " current_db >"/dev/stderr"
     }
@@ -657,8 +673,8 @@ then
 fi
 
 
-echo "add_varwwwsitephp '$dest_dir_site' '$docroot' '$dbname' '$hostname' '$site_folder' '$dbuser' '$dbpassword' '$sitename' '$ac_db_name' '$table_prefix'"
-add_varwwwsitephp $dest_dir_site $docroot $dbname $hostname $site_folder $dbuser $dbpassword $sitename $ac_db_name $table_prefix
+echo "add_varwwwsitephp '$dest_dir_site' '$docroot' '$dbname' '$hostname' '$site_folder' '$dbuser' '$dbpassword' '$sitename' '$ac_db_name' '$table_prefix' '$hash_salt'"
+add_varwwwsitephp $dest_dir_site "$docroot" "$dbname" "$hostname" "$site_folder" "$dbuser" "$dbpassword" "$sitename" "$ac_db_name" "$table_prefix" "$hash_salt"
 
 echo "add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname"
 add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname
@@ -693,32 +709,6 @@ echo "Done!"
 echo ""
 
 #
-# Test that Drush runs.
-#
-echo "Reconfiguring site using drush"
-cd $sitefolderpath
-$drush status >/dev/null 2>&1
-drush_ran=0
-if [ $? -gt 0 ]
-then
-  echo "  WARNING: Drush failed to run!"
-else 
-  #
-  # Issue some drush commands
-  #
-  #modules_to_disable="memcache memcache_admin securelogin shield securepages"
-  modules_to_disable="securelogin shield securepages"
-  echo "  Disabling some modules: $modules_to_disable"
-  $drush dis -y $modules_to_disable
-  echo ""
-  echo "  Activating user 1 in case it is disabled"
-  echo "UPDATE users SET status=1 WHERE uid=1" | $drush sql-cli
-  echo "  Done!"
-  drush_ran=1
-fi
-echo ""
-
-#
 # Add a sites.php entry
 #
 echo "Adding sites.php entry: $hostname => $site_folder"
@@ -732,6 +722,38 @@ echo "\$sites['$hostname'] = '$site_folder';" >>$docroot/sites/sites.php
 echo ""
 
 #
+# Test that Drush runs.
+#
+echo "Reconfiguring site using drush"
+cd $sitefolderpath
+$drush status >/dev/null 2>&1
+drush_ran=0
+if [ $? -gt 0 ]
+then
+  echo "  WARNING: Drush failed to run!"
+else
+  if [ $drupal_version -eq 8 ]
+  then
+    echo "Running drush cr..."
+    $drush cr
+  else
+    #
+    # Issue some drush commands
+    #
+    #modules_to_disable="memcache memcache_admin securelogin shield securepages"
+    modules_to_disable="securelogin shield securepages"
+    echo "  Disabling some modules: $modules_to_disable"
+    $drush dis -y $modules_to_disable
+    echo ""
+    echo "  Activating user 1 in case it is disabled"
+    echo "UPDATE users SET status=1 WHERE uid=1" | $drush sql-cli
+  fi
+  echo "  Done!"
+  drush_ran=1
+fi
+echo ""
+
+#
 # Add in a pre-made PHPStorm project
 #
 if [ -r $phpstorm_idea_template_folder ]
@@ -739,14 +761,19 @@ then
   echo "Adding PHPStorm project for this site..."
   cp -R $phpstorm_idea_template_folder $docroot/.idea
   # Change some variables in the project files
-  if [ `grep -c "core *= *7.x" $docroot/modules/node/node.info` -eq 1 ]
+  if [ $drupal_version -eq 8 ]
   then
-    DRUPAL_VERSION=7
+    DRUPAL_VERSION=8
   else
-    DRUPAL_VERSION=6
+    if [ `grep -c "core *= *7.x" $docroot/modules/node/node.info` -eq 1 ]
+    then
+      DRUPAL_VERSION=7
+    else
+      DRUPAL_VERSION=6
+    fi
   fi
   settings_filename=${ac_db_name}-settings.inc
-  settings_filepath=$dest_dir_site/${settings_filename}
+  #settings_filepath=$dest_dir_site/${settings_filename}
   cd $docroot/.idea
   cat workspace.xml |sed \
     -e "s/{{DRUPAL_VERSION}}/$DRUPAL_VERSION/"\
