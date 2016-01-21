@@ -47,6 +47,11 @@
       </file>
     </leaf>
   </component>
+  <component name="PhpServers">
+    <servers>
+      <server host="{{HOSTNAME}}" name="{{HOSTNAME}}" />
+    </servers>
+  </component>
   <component name="PhpWorkspaceProjectConfiguration" backward_compatibility_performed="true">
     <include_path>
       <path value="." />
