@@ -137,10 +137,35 @@ function add_varwwwsitephp() {
 // D6 Version
 \$db_url='mysqli://$dbuser:$dbpassword@localhost/$dbname';
 
-// D8 stuff
+### Start of D8 Stuff
+if (!function_exists('conf_path')) {
+  function conf_path(\$require_settings = TRUE, \$reset = FALSE, \Symfony\Component\HttpFoundation\Request \$request = NULL) {
+    if (!isset(\$request)) {
+      if (\Drupal::hasRequest()) {
+        \$request = \Drupal::request();
+      }
+      // @todo Remove once external CLI scripts (Drush) are updated.
+      else {
+        \$request = \Symfony\Component\HttpFoundation\Request::createFromGlobals();
+      }
+    }
+    if (\Drupal::hasService('kernel')) {
+      \$site_path = \Drupal::service('kernel')->getSitePath();
+    }
+    if (!isset(\$site_path) || empty(\$site_path)) {
+      \$site_path = \Drupal\Core\DrupalKernel::findSitePath(\$request, \$require_settings);
+    }
+    return \$site_path;
+  }
+}
 \$settings['hash_salt'] = '$hash_salt';
 \$config_directories['active'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/active';
 \$config_directories['staging'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/staging';
+// Make local.* hostnames into the trusted host patterns
+// TODO: Maybe add these instead of overriding them!
+\$settings['trusted_host_patterns'] = array('^local..*');
+### End of D8 Stuff
+
 
 # Force some variables so as not to wreak havok on real site!
 # Force apachesolr to be read-only!
