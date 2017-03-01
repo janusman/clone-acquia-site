@@ -179,14 +179,17 @@ ini_set('memory_limit', '256M');
 # Fix file paths
 \$conf['file_public_path'] = 'sites/$sitefolder/files';
 \$conf['file_private_path'] = 'sites/$sitefolder/files';
-\$conf['file_temporary_path'] = '/tmp';
+\$conf['file_temporary_path'] = '/tmp/$hostname';
 
 # Fix for local domain.
-\$base_url = "http://$hostname:${apache_http_port_number}";
+\$base_url = "http://$hostname";
 \$cookie_domain = "$hostname";
+\$conf['securepages_basepath'] = "http://$hostname";
+\$conf['securepages_basepath_ssl'] = "https://$hostname";
+\$conf['securepages_enable'] = FALSE;
 
 # Report all PHP errors
-error_reporting(E_ALL);
+if (defined('VERSION') && VERSION > 6) error_reporting(E_ALL);
 # Show errors on the HTML output sent to browsers.
 ini_set('display_errors', TRUE);
 # Show any errors that happen during PHP startup
@@ -199,6 +202,7 @@ ini_set('display_startup_errors', TRUE);
 ####################
 # Memcache stuff::
 # - Set the key to something sane for your local memcache.
+\$conf['memcache_servers'] = array('127.0.0.1:11211' => 'default');
 \$conf['memcache_key_prefix'] = '${dbname}';
 
 # To DISABLE memcahe on a site that already has it, uncomment the following:
@@ -219,10 +223,21 @@ ini_set('display_startup_errors', TRUE);
 #\$conf['acquia_key'] = '86a93199c349139595cb17f2a04dbfa2';
 ######################
 
+######################
+# Devel email
+#
+# $conf['mail_system'] = array('default-system' => 'DevelMailLog');
+######################
 
 ////////////////////////////////////////////////////////////////
 
 EOF
   echo "Done!"
   echo ""
+}
+
+function header() {
+  echo ""
+  echo "${COLOR_GRAY}._____________________________________________________________________________"
+  echo "|${COLOR_GREEN}  $1${COLOR_NONE}"
 }

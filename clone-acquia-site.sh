@@ -76,6 +76,9 @@ do
     --help)
       HELP=1
       ;;
+    --stages=*)
+      STAGE=$1
+      ;;
     --mc)
       STAGE=$1
       ;;
@@ -130,7 +133,13 @@ do
     --local-dbfile=*)
       tmp=`echo $1 |cut -f2- -d=`
       local_dbfile=`realpath $tmp`
-      echo "  Using localdbfile $local_dbfile"
+      if [ $? -gt 0 ]
+      then
+        echo "${COLOR_RED}ERROR: Can't find $tmp{COLOR_NONE}"
+        exit 1
+      else
+        echo "  Using localdbfile $local_dbfile"
+      fi
       ;;
     --table-prefix=*)
       table_prefix=`echo $1 |cut -f2- -d=`
@@ -200,7 +209,6 @@ Options:
                             Example: --skip-data-tables="^(foo|bar)"  #Skip tables prefixed 'foo' or 'bar'
   --myisam-latin-charset: Additionally to innodb->myisam conversion, convert to latin1 charset.
                           ** DANGER: CAN CAUSE DATA LOSS OR OTHERWISE WEIRD BEHAVIOR **
-
   --delete              : DELETE a local site completely *** DANGER ***
 EOF
   exit
@@ -263,7 +271,7 @@ then
   if [ `echo SHOW DATABASES |mysql |grep -c $dbname` -eq 1 ]
   then
     echo "Removing DB $dbname ..."
-    mysqladmin -u$dbuser --password=$dbpassword drop $dbname
+    mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname
     echo "  Done."
   else
     echo "${COLOR_YELLOW}Warning: Database $dbname does not exist!${COLOR_NONE}"
@@ -361,7 +369,7 @@ fi
 
 # Check aht works
 echo "" |ahtaht site:info >$tmpout 2>&1
-if [ `grep -c "Could not find sitegroup or environment" $tmpout` -eq 1 ]
+if [ `egrep -c "Could not find sitegroup or environment|Catchable fatal error" $tmpout` -eq 1 ]
 then
   echo "${COLOR_RED}ERROR: Site possibly needs --ace or --ac switch.${COLOR_NONE}"
   exit 1
@@ -383,6 +391,8 @@ then
     echo "${COLOR_RED}ERROR: --local-dbfile=$local_dbfile doesn't exist${COLOR_NONE}"
     echo ""
     exit 1
+  else
+    echo "${COLOR_GREEN}Using local db file: $local_dbfile${COLOR_NONE}"
   fi
 fi
 
@@ -463,7 +473,7 @@ then
   fi
 
   echo ""
-  echo "Autodetecting DB name..."
+  header "Autodetecting DB name... (you can skip this by specifying the --site-folder argument)"
   uriarg="${uri:-$site_folder}"
   ahtaht drush8 status --uri=$uriarg --pipe >$tmpout 2>&1
   if [ `grep -c "Drush command terminated abnormally" $tmpout` -gt 0 ]
@@ -497,11 +507,11 @@ then
 fi
 
 # Check database does not exist
-if [ `echo "SHOW DATABASES LIKE '$dbname'" | mysql -u$dbuser --password=$dbpassword |wc -l` -gt 0 -a ${skip_db:-0} = 0 -a ${local_dbfile:-0} = 0 ]
+if [ `echo "SHOW DATABASES LIKE '$dbname'" | mysql -u$dbuser --password=$dbpassword |wc -l` -gt 0 -a ${skip_db:-0} = 0 ]
 then
   echo "${COLOR_RED}ERROR: Database $dbname already exists. You can remove it, or use the --skip-db option."
   echo "  To remove it, run:"
-  echo "  mysqladmin -u$dbuser --password=$dbpassword drop $dbname${COLOR_NONE}"
+  echo "  mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname${COLOR_NONE}"
   exit 1
 fi
 
@@ -529,9 +539,12 @@ local_dbname=$local_dbname
 local_dbfile=$local_dbfile
 skip_data_tables=$skip_data_tables
 table_prefix=$table_prefix
+drupal_version=$drupal_version
+hash_salt=$hash_salt
 EOF
 
 # Clone the repository
+header "Code repository"
 if [ ${skip_repo:-x} = x ]
 then
   echo "Attempting to checkout the code repository..."
@@ -588,9 +601,10 @@ fi
 #
 # Get DB and load it locally.
 #
+header "Database"
 if [ ${skip_db:-x} = x ]
 then
-  if [ ${local_dbfile:-x} = x ]
+  if [ "${local_dbfile:-x}" = x ]
   then
     echo "Getting database..."
     ahtaht db:backup-get --latest --database=$ac_db_name >$tmpscript
@@ -687,7 +701,7 @@ NR==1 {
     }
     output=1
     # Skip data in some tables
-    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|panels_hash_database_cache|queue|search_index|search_dataset|search_total|sessions|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
+    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|audit_log|audit_log_roles|advancedqueue|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|mail_logger|order_export.*|panels_hash_database_cache|queue|search_index|search_dataset|search_total|search_api_db.*|sessions|temp.*|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
       output=0
       printf " ... Skipping Data import (imported structure only) for " current_db >"/dev/stderr"
     }
@@ -702,19 +716,26 @@ END {
 
   if [ $? -gt 0 ]
   then
-    echo "Error! Could not import data into database $dbname"
+    echo "${COLOR_RED}Error! Could not import data into database $dbname"
     echo "  If you got a 'Key too long' error, try running again using these flags:"
     echo "   --myisam-latin-charset"
     echo "   --skip-convert-myisam"
+    echo ""
+    echo "To remove DB, use this command:"
+    echo "  mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname"
+    echo "${COLOR_NONE}"
     exit 1
   fi
 
   echo "  Importing done!"
 
   # Scrub the users in the DB
-  echo "  Scrubbing the users table in the DB..."
-  echo "UPDATE users SET mail=CONCAT('user', uid, '@example.com') WHERE uid > 0" |mysql -u$dbuser --password=$dbpassword $dbname
-  echo "  Scrubbing done!"
+  if [ ${drupal_version} != 8 ]
+  then
+    echo "  Scrubbing the users table in the DB..."
+    echo "UPDATE users SET mail=CONCAT('user', uid, '@example.com') WHERE uid > 0" |mysql -u$dbuser --password=$dbpassword $dbname
+    echo "  Scrubbing done!"
+  fi
 
   echo "Done!"
   echo ""
@@ -723,8 +744,39 @@ else
   echo ""
 fi
 
+
 # Get some variables
 docroot="${dest_dir_site}/${repofolder}/docroot"
+
+
+# If this seems to be an ACSF site, move stuff around
+if [ "$site_folder" = "g" ]
+then
+  header "Site seems to be Site Factory: creating replacement sites/default folder"
+  curdir=`pwd`
+  cd $docroot/sites
+  git mv default default-original
+  mkdir default
+  cat <<EOF >default/settings.php
+<?php
+
+# This minimal settings.php was generated by clone-acquia-site.sh 
+\$databases = array();
+\$update_free_access = FALSE;
+\$drupal_hash_salt = '';
+
+ini_set('session.gc_probability', 1);
+ini_set('session.gc_divisor', 100);
+ini_set('session.gc_maxlifetime', 200000);
+ini_set('session.cookie_lifetime', 2000000);
+
+require_once "/var/www/site-php/${sitename}/${ac_db_name}-settings.inc";
+
+EOF
+  site_folder="default"
+  cd $curdir
+fi
+
 sitefolderpath="${docroot}/sites/${site_folder}"
 if [ ! -r $sitefolderpath ]
 then
@@ -732,6 +784,8 @@ then
   exit 1
 fi
 
+# Configure apache
+header "Configuring local Apache"
 
 echo "add_varwwwsitephp '$dest_dir_site' '$docroot' '$dbname' '$hostname' '$site_folder' '$dbuser' '$dbpassword' '$sitename' '$ac_db_name' '$table_prefix' '$hash_salt'"
 add_varwwwsitephp $dest_dir_site "$docroot" "$dbname" "$hostname" "$site_folder" "$dbuser" "$dbpassword" "$sitename" "$ac_db_name" "$table_prefix" "$hash_salt"
@@ -749,14 +803,19 @@ ls ${dest_dir_site}/*.log | awk '{ print "  " $0 }'
 echo "Done!"
 echo ""
 
+header "Add /etc/hosts entry"
 add_etchosts $hostname
 
 #
 # Create files folder!
 #
-echo "Creating EMPTY files folder at $sitefolderpath/files"
+echo "Creating some folders..."
+echo "  Creating EMPTY files folder at $sitefolderpath/files"
 mkdir $sitefolderpath/files 2>/dev/null
 chmod a+w $sitefolderpath/files
+echo "  Creating tmp folder at /tmp/$hostname"
+mkdir /tmp/$hostname 2>/dev/null
+chmod a+w /tmp/$hostname
 echo "Done!"
 echo ""
 
@@ -784,26 +843,29 @@ echo ""
 #
 # Test that Drush runs.
 #
-echo "Reconfiguring site using drush"
+header "Configuring Drupal site to work (better) locally"
 cd $sitefolderpath
 $drush status >/dev/null 2>&1
 drush_ran=0
+
+modules_to_disable="securelogin shield domain_301_redirect new_relic_rpm password_policy simplesamlphp_auth"
+
 if [ $? -gt 0 ]
 then
   echo "  WARNING: Drush failed to run!"
 else
   if [ ${drupal_version:-x} = 8 ]
   then
+    echo "  Uninstalling some modules: $modules_to_disable"
+    $drush pm-uninstall $YES $modules_to_disable
     echo "Running drush cr..."
     $drush cr
   else
     #
     # Issue some drush commands
     #
-    #modules_to_disable="memcache memcache_admin securelogin shield securepages"
-    modules_to_disable="securelogin shield securepages domain_301_redirect new_relic_rpm password_policy"
     echo "  Disabling some modules: $modules_to_disable"
-    $drush dis $YES $modules_to_disable
+    $drush dis $YES $modules_to_disable    
     echo ""
     echo "  Activating user 1 in case it is disabled"
     echo "UPDATE users SET status=1 WHERE uid=1" | $drush sql-cli
@@ -816,9 +878,9 @@ echo ""
 #
 # Add in a pre-made PHPStorm project
 #
+header "Adding PHPstorm project"
 if [ -r $phpstorm_idea_template_folder ]
 then
-  echo "Adding PHPStorm project for this site..."
   cp -R $phpstorm_idea_template_folder $docroot/.idea
   # Change some variables in the project files
   if [ ${drupal_version:-x} = 8 ]
@@ -835,11 +897,15 @@ then
   settings_filename=${ac_db_name}-settings.inc
   #settings_filepath=$dest_dir_site/${settings_filename}
   cd $docroot/.idea
+  # Replace placeholders with real values
   cat workspace.xml |sed \
     -e "s/{{DRUPAL_VERSION}}/$DRUPAL_VERSION/"\
     -e "s/{{HOSTNAME}}/$hostname/" \
     -e "s/{{VAR_WWW_PHP_SETTINGS_FILENAME}}/$settings_filename/" >$tmpout && cp $tmpout workspace.xml
   cat deployment.xml | sed -e "s%{{SITE_URL}}%$hostname%" >$tmpout && cp $tmpout deployment.xml
+  # Add .gitignore for .idea
+  echo ".idea/*" >>$docroot/.gitignore
+  
   echo "  Done!"
   echo "  You can open the project directly in PhpStorm by running:"
   echo "    storm \"$docroot\""
@@ -849,6 +915,7 @@ fi
 cd $docroot
 
 # Done!
+header "FINISHED!!!"
 echo "Site ready!!!! \o/"
 echo ""
 
