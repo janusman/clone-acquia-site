@@ -33,8 +33,14 @@ source $clone_command_folder/functions.sh
 # Defaults
 #site_folder=default #Site folder you are targetting.
 table_prefix=""
+innodb_to_myisam=0
+skip_data_tables_default_enabled=0
+skip_data_tables_default="accesslog|audit_log|audit_log_roles|advancedqueue|batch|boost_cache|cache|cachetags|cache_.*|feedback|field_deleted_.*|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|mail_logger|order_export.*|panels_hash_database_cache|queue|search_index|search_dataset|search_total|search_api_db.*|sessions|temp.*|watchdog|webform_sub.*"
 skip_data_tables=2t283762uhqweuyqweouyqwoeuy # Random never-ever-matching tablename
+skip_convert_to_myisam_tables=2t283762uhqweuyqweouyqwoeuy # Random never-ever-matching tablename
 YES=""
+skip_db_exists_check=0
+drupal_version=8
 # Constants
 # See http://linuxtidbits.wordpress.com/2008/08/11/output-color-on-bash-scripts/
 COLOR_RED=$(tput setaf 1) #"\[\033[0;31m\]"
@@ -102,13 +108,17 @@ do
       echo "  ${COLOR_YELLOW}Skipping repository checkout${COLOR_NONE}"
       skip_repo=1
       ;;
-    --skip-convert-myisam)
-      echo "  ${COLOR_YELLOW}Skipping InnoDB -> MyISAM conversion${COLOR_NONE}"
-      innodb_to_myisam=0
+    --convert-myisam)
+      echo "  ${COLOR_YELLOW}Enabling InnoDB -> MyISAM conversion${COLOR_NONE}"
+      innodb_to_myisam=1
       ;;
     --myisam-latin-charset)
       echo "  ${COLOR_YELLOW}Enabled latin1 conversion during InnoDB -> MyISAM conversion${COLOR_NONE}"
       myisam_latin_charset=1
+      ;;
+    --innodb-utf8-charset)
+      echo "  ${COLOR_YELLOW}Enabled forcing of utf8 charset for InnoDB${COLOR_NONE}"
+      innodb_utf8_charset=1
       ;;
     --uri=*)
       uri=`echo $1 |cut -f2- -d=`
@@ -141,17 +151,40 @@ do
         echo "  Using localdbfile $local_dbfile"
       fi
       ;;
+    --skip-db-exists-check)
+      skip_db_exists_check=1
+      ;;
+    --drop-db)
+      drop_db=1;
+      ;;
     --table-prefix=*)
       table_prefix=`echo $1 |cut -f2- -d=`
       echo "  Using table-prefix $table_prefix"
       ;;
+    --disable-skip-default-data-tables)
+      echo "  ${COLOR_YELLOW}Turning off data import of default tables $skip_data_tables_default ${COLOR_NONE}"    
+      skip_data_tables_default_enabled=1
+      ;;
     --skip-data-tables=*)
       skip_data_tables=`echo $1 |cut -f2- -d=`
-      echo "  Skipping data import of tables matching $skip_data_tables"
+      echo "  ${COLOR_YELLOW}Skipping data import of tables matching \"$skip_data_tables\"${COLOR_NONE}"
+      ;;
+    --skip-convert-to-myisam-tables=*)
+      skip_convert_to_myisam_tables=`echo $1 |cut -f2- -d=`
+      echo "  ${COLOR_YELLOW}Skipping InnoDB->MyISAM conversion of tables matching \"$skip_convert_to_myisam_tables\"${COLOR_NONE}"
       ;;
     --delete)
       delete_site=1;
       ;;
+    --drush7)
+      drush_remote=drush7;
+      ;;
+    --drush8)
+      drush_remote=drush8;
+      ;;
+    --drush9)
+      drush_remote=drush9;
+      ;; 
     --*)
       # error unknown (long) option $1
       echo "  ${COLOR_RED}Warning: Unknown option $1${COLOR_NONE}"
@@ -173,6 +206,9 @@ do
     @*)
       SITENAME=$1
       ;;
+    z*)
+      ZD_TICKET=$1
+      ;;
   esac
 
   shift
@@ -189,7 +225,10 @@ then
 USAGE: $0 sitename env
 
 Clones a site locally. Usage:
-  clone-acquia-mc-site.sh [options] @SITENAME.ENV
+  clone-acquia-mc-site.sh [options] @SITENAME.ENV [z123456]
+Arguments:
+  @SITENAME.ENV : A site/environment.
+  zXXXXXXX      : A Zendesk ticket number
 Options:
   -h or --help          : Shows this help text and exits.
   --mc  or  --dc        : Force devcloud/managed cloud site.
@@ -204,11 +243,19 @@ Options:
   --local-dbname=...    : Local DB name to use.  Defaults to "local.[env].[sitename].[site-folder]"
   --local-dbfile=...    : Local DB file to use. If present, it skips downloading the DB from the site.
   --table-prefix=...    : Define the table prefix used by the site.
-  --skip-convert-myisam : Do *NOT* convert all DB tables to MyISAM (for perf. purposes)
+  --convert-myisam      : Convert all DB tables to MyISAM (for perf. purposes)
+  --drop-db             : Drop DB before importing. Ignored if --skip-db-exists-check
+  --skip-db-exists-check: Do not stop even if DB exists. Disables --drop-db
+  --disable-skip-default-data-tables :
+                          Skip importing some common data tables. The regex is:
+                          $skip_data_tables_default
+  --skip-convert-to-myisam-tables=[regex] : Skip converting certain tables to myisam, only works
+                          if --skip-convert-myisam is NOT specified.
   --skip-data-tables=[regex] : Skip data import of table names that match the regex
                             Example: --skip-data-tables="^(foo|bar)"  #Skip tables prefixed 'foo' or 'bar'
   --myisam-latin-charset: Additionally to innodb->myisam conversion, convert to latin1 charset.
                           ** DANGER: CAN CAUSE DATA LOSS OR OTHERWISE WEIRD BEHAVIOR **
+  --innodb-utf8-charset : Force InnoDB tables to use utf8 charset.
   --delete              : DELETE a local site completely *** DANGER ***
 EOF
   exit
@@ -439,7 +486,7 @@ fi
 if [ ${site_folder:-x} = x ]
 then
   # Check sitename/env exists!
-  ahtaht application:sites >$tmpout
+  ahtaht application:sites --format=txt |tr -d '\015' | cut -f1 -d/ |sort -u >$tmpout
   if [ $? -gt 0 ]
   then
     echo "${COLOR_RED}ERROR: aht could not find the site/environment using: aht @${sitename}.${env}${COLOR_NONE}"
@@ -452,7 +499,7 @@ then
     # If we have a --uri, try to get it from there.
     if [ ${uri:-x} != x ]
     then
-      site_folder=`ahtaht drush8 status --uri=$uri |grep "Site path" |awk '{ print $4 }' |cut -f2 -d/`
+      site_folder=`ahtaht $drush_remote status --uri=$uri |grep "Site path" |awk '{ print $4 }' |cut -f2 -d/`
       if [ ${site_folder:-x} != x ]
       then
         echo "NOTE: This site has various sites/* folders, but using --uri=$uri the '$site_folder' folder was detected."
@@ -475,7 +522,7 @@ then
   echo ""
   header "Autodetecting DB name... (you can skip this by specifying the --site-folder argument)"
   uriarg="${uri:-$site_folder}"
-  ahtaht drush8 status --uri=$uriarg --pipe >$tmpout 2>&1
+  ahtaht $drush_remote status --uri=$uriarg --pipe >$tmpout 2>&1
   if [ `grep -c "Drush command terminated abnormally" $tmpout` -gt 0 ]
   then
     echo "${COLOR_RED}Could not run drush on site! Errors below:"
@@ -499,7 +546,7 @@ then
   if [ ${drupal_version} = 8 ]
   then
     echo "Running DRUPAL 8"
-    hash_salt=`aht $STAGE @$SITENAME drush8 ev --uri=$uriarg ' echo \Drupal\Core\Site\Settings::getHashSalt()'`
+    hash_salt=`aht $STAGE @$SITENAME $drush_remote ev --uri=$uriarg ' echo \Drupal\Core\Site\Settings::getHashSalt()'`
     echo "--hash_salt setting is $hash_salt";
   fi
   echo "Done!"
@@ -507,12 +554,20 @@ then
 fi
 
 # Check database does not exist
-if [ `echo "SHOW DATABASES LIKE '$dbname'" | mysql -u$dbuser --password=$dbpassword |wc -l` -gt 0 -a ${skip_db:-0} = 0 ]
+if [ $skip_db_exists_check = 0 ]
 then
-  echo "${COLOR_RED}ERROR: Database $dbname already exists. You can remove it, or use the --skip-db option."
-  echo "  To remove it, run:"
-  echo "  mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname${COLOR_NONE}"
-  exit 1
+  if [ `echo "SHOW DATABASES LIKE '$dbname'" | mysql -u$dbuser --password=$dbpassword |wc -l` -gt 0 -a ${skip_db:-0} = 0 ]
+  then
+    if [ ${drop_db:-0} = 0 ]
+    then
+      echo "${COLOR_RED}ERROR: Database $dbname already exists. You can remove it, or use the --skip-db option."
+      echo "  To remove it, run:"
+      echo "  mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname${COLOR_NONE}"
+      exit 1
+    fi
+    echo "${COLOR_YELLOW}INFO: Dropping existing DB $dbname${COLOR_NONE}"
+    mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname 
+  fi
 fi
 
 #
@@ -527,20 +582,24 @@ cat <<EOF >clone-site-args.txt
 # These are the arguments used to call the clone-acquia-mc-site.sh script
 # Generated on $date
 # Command: $0
-SITENAME=@$SITENAME
-STAGE=$STAGE
-innodb_to_myisam=$innodb_to_myisam
-myisam_latin_charset=$myisam_latin_charset
-uri=$uri
-site_folder=$site_folder
-ac_db_name=$ac_db_name
-local_hostname=$local_hostname
-local_dbname=$local_dbname
-local_dbfile=$local_dbfile
-skip_data_tables=$skip_data_tables
-table_prefix=$table_prefix
-drupal_version=$drupal_version
-hash_salt=$hash_salt
+SITENAME="@$SITENAME"
+STAGE="$STAGE"
+ZD_TICKET="$ZD_TICKET"
+innodb_to_myisam="$innodb_to_myisam"
+myisam_latin_charset="$myisam_latin_charset"
+innodb_utf8_charset="$innodb_utf8_charset"
+uri="$uri"
+site_folder="$site_folder"
+ac_db_name="$ac_db_name"
+local_hostname="$local_hostname"
+local_dbname="$local_dbname"
+local_dbfile="$local_dbfile"
+skip_data_tables_default_enabled=$skip_data_tables_default_enabled
+skip_data_tables="$skip_data_tables"
+skip_convert_to_myisam_tables="$skip_convert_to_myisam_tables"
+table_prefix="$table_prefix"
+drupal_version="$drupal_version"
+hash_salt="$hash_salt"
 EOF
 
 # Clone the repository
@@ -598,6 +657,14 @@ else
   echo ""
 fi
 
+# Try to detect Drupal version
+if [ -f $repofolder/docroot/core/authorize.php ]
+then
+  drupal_version=8
+  echo "$COLOR_YELLOW  Site is D8 $COLOR_NONE"
+fi
+
+
 #
 # Get DB and load it locally.
 #
@@ -654,13 +721,17 @@ then
   #
   echo "Creating the database at $dbname from file $dbfilename"
   mysqladmin -u$dbuser --password=$dbpassword create $dbname 2>/dev/null
-  if [ $? -gt 0 ]
+  if [ $? -gt 0 -a $skip_db_exists_check -eq 0 ]
   then
     echo "Error! Could not run mysqladmin create for database $dbname"
     exit 1
   fi
   # Import the database, skipping some data:
   echo "  Starting DB import..."
+  if [ $skip_data_tables_default_enabled = 1 ]
+  then
+    skip_data_tables_default="xwqiet9721uo7621076";  #RANDOM string that won't match
+  fi
   gzip -d -c $dbfilename | awk -F'`' '
 NR==1 {
   # http://superuser.com/questions/246784/how-to-tune-mysql-for-restoration-from-mysql-dump
@@ -683,14 +754,23 @@ NR==1 {
     printf " Processing table {" current_db "}"> "/dev/stderr"
   }
   # Switch the engine from InnoDB to MyISAM : MUCHO FAST.
-  if (substr(start_of_line,1,8)==") ENGINE" && '${innodb_to_myisam:-0}' == 1) {
-    if (current_db ~ /^'${table_prefix}'(locales_source|locales_target|menu_links|redirect|registry|registry_file|revision_scheduler|search_node_links|workbench_scheduler_types)/) {
-      printf " ... Skipping InnoDB -> MyISAM for " current_db >"/dev/stderr"
-    } else {
-      gsub(/=InnoDB/, "=MyISAM", $0);
-      if ('${myisam_latin_charset:-0}' == 1) {
-        gsub(/CHARSET=utf8/, "CHARSET=latin1", $0);
+  if (substr(start_of_line,1,8)==") ENGINE") {
+    if ('${innodb_to_myisam:-0}' == 1) {
+      if (current_db ~ /^'${table_prefix}'(locales_source|locales_target|menu_links|redirect|registry|registry_file|revision_scheduler|search_node_links|workbench_scheduler_types|url_alias)/ || current_db ~ /'$skip_convert_to_myisam_tables'/) {
+        printf " ... Skipping InnoDB -> MyISAM for " current_db >"/dev/stderr"
+        print >"/dev/stderr"
+      } else {
+        gsub(/=InnoDB/, "=MyISAM", $0);
+        if ('${myisam_latin_charset:-0}' == 1) {
+          gsub(/CHARSET=utf8/, "CHARSET=latin1", $0);
+        }
       }
+    }
+    if ('${innodb_utf8_charset:-0}' == 1) {
+      #printf "\n... Forcing UTF8 charset on " current_db " : \nOriginal Line == " $0 "\n" >"/dev/stderr"
+      gsub(/CHARSET=utf8[^ ]* /, "CHARSET=utf8 ", $0);
+      #printf "New line: ==" $0 "\n" >"/dev/stderr"
+      start_of_line=substr($0,1,200);
     }
   }
   # Detect beginning of table data dump.
@@ -701,7 +781,7 @@ NR==1 {
     }
     output=1
     # Skip data in some tables
-    if (current_db ~ /^'${table_prefix}'(__ACQUIA_MONITORING|accesslog|audit_log|audit_log_roles|advancedqueue|batch|boost_cache|cache|cache_.*|feedback|field_data_field_accessed_categories|field_revision_field_accessed_categories|history|mail_logger|order_export.*|panels_hash_database_cache|queue|search_index|search_dataset|search_total|search_api_db.*|sessions|temp.*|watchdog|webform_sub.*)$/ || current_db ~ /'$skip_data_tables'/) {
+    if (current_db ~ /^'${table_prefix}'('${skip_data_tables_default}')$/ || current_db ~ /'$skip_data_tables'/) {
       output=0
       printf " ... Skipping Data import (imported structure only) for " current_db >"/dev/stderr"
     }
@@ -718,11 +798,13 @@ END {
   then
     echo "${COLOR_RED}Error! Could not import data into database $dbname"
     echo "  If you got a 'Key too long' error, try running again using these flags:"
+    echo "   --innodb-utf8-charset  (preferred!)"
     echo "   --myisam-latin-charset"
-    echo "   --skip-convert-myisam"
+    echo "   --convert-myisam"
     echo ""
     echo "To remove DB, use this command:"
     echo "  mysqladmin --force -u$dbuser --password=$dbpassword drop $dbname"
+    echo "(or run this script with --drop-db)"
     echo "${COLOR_NONE}"
     exit 1
   fi
@@ -793,6 +875,9 @@ add_varwwwsitephp $dest_dir_site "$docroot" "$dbname" "$hostname" "$site_folder"
 echo "add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname"
 add_vhosts $vhosts_includes_dir $dest_dir_site $docroot $hostname
 
+#Make tmp folder
+mkdir /tmp/$hostname 2>/dev/null
+
 # Create and allow writing to new php-errors.log
 echo "Creating empty .log files at ${dest_dir_site}..."
 touch ${dest_dir_site}/error.log
@@ -813,6 +898,10 @@ echo "Creating some folders..."
 echo "  Creating EMPTY files folder at $sitefolderpath/files"
 mkdir $sitefolderpath/files 2>/dev/null
 chmod a+w $sitefolderpath/files
+echo "  Creating empty private files folder at ${dest_dir_site}/files-private"
+mkdir $dest_dir_site/files-private 2>/dev/null
+chmod a+w $dest_dir_site/files-private
+
 echo "  Creating tmp folder at /tmp/$hostname"
 mkdir /tmp/$hostname 2>/dev/null
 chmod a+w /tmp/$hostname
@@ -838,6 +927,7 @@ then
 fi
 echo "## ADDED BY $0" >>$docroot/sites/sites.php
 echo "\$sites['$hostname'] = '$site_folder';" >>$docroot/sites/sites.php
+echo "\$sites['default'] = '$site_folder';" >>$docroot/sites/sites.php
 echo ""
 
 #
@@ -848,7 +938,7 @@ cd $sitefolderpath
 $drush status >/dev/null 2>&1
 drush_ran=0
 
-modules_to_disable="securelogin shield domain_301_redirect new_relic_rpm password_policy simplesamlphp_auth"
+modules_to_disable="securelogin shield domain_301_redirect new_relic_rpm password_policy simplesamlphp_auth tfa_basic restrict_by_ip"
 
 if [ $? -gt 0 ]
 then
@@ -857,7 +947,10 @@ else
   if [ ${drupal_version:-x} = 8 ]
   then
     echo "  Uninstalling some modules: $modules_to_disable"
-    $drush pm-uninstall $YES $modules_to_disable
+    for nom in $modules_to_disable
+    do
+      $drush pm-uninstall $YES $nom 2>/dev/null
+    done
     echo "Running drush cr..."
     $drush cr
   else

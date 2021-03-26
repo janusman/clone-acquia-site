@@ -159,11 +159,14 @@ if (!function_exists('conf_path')) {
   }
 }
 \$settings['hash_salt'] = '$hash_salt';
-\$config_directories['active'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/active';
-\$config_directories['staging'] = conf_path() . '/files/config_1111111111111111111111111111111111111111/staging';
+\$my_config_dir = "/files/config_1111111111111111111111111111111111111111";
+\$settings["config_sync_directory"] = conf_path() . \$my_config_dir . '/sync';
+\$config_directories['active'] = conf_path() . \$my_config_dir . '/active';
+\$config_directories['staging'] = conf_path() . \$my_config_dir . '/staging';
 // Make local.* hostnames into the trusted host patterns
 // TODO: Maybe add these instead of overriding them!
 \$settings['trusted_host_patterns'] = array('^local..*');
+\$settings['system.logging']['error_level'] = 'all';
 ### End of D8 Stuff
 
 
@@ -178,8 +181,10 @@ ini_set('memory_limit', '256M');
 
 # Fix file paths
 \$conf['file_public_path'] = 'sites/$sitefolder/files';
-\$conf['file_private_path'] = 'sites/$sitefolder/files';
+\$conf['file_private_path'] = '$dest_dir_site/files-private';
 \$conf['file_temporary_path'] = '/tmp/$hostname';
+\$settings['file_temp_path'] = '/tmp/$hostname';
+\$config['system.file']['path']['temporary'] = '/tmp/$hostname'; 
 
 # Fix for local domain.
 \$base_url = "http://$hostname";
@@ -188,8 +193,8 @@ ini_set('memory_limit', '256M');
 \$conf['securepages_basepath_ssl'] = "https://$hostname";
 \$conf['securepages_enable'] = FALSE;
 
-# Report all PHP errors
-if (defined('VERSION') && VERSION > 6) error_reporting(E_ALL);
+# Report all PHP errors (except "Deprecated" Warnings)
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 # Show errors on the HTML output sent to browsers.
 ini_set('display_errors', TRUE);
 # Show any errors that happen during PHP startup
@@ -203,15 +208,26 @@ ini_set('display_startup_errors', TRUE);
 # Memcache stuff::
 # - Set the key to something sane for your local memcache.
 \$conf['memcache_servers'] = array('127.0.0.1:11211' => 'default');
-\$conf['memcache_key_prefix'] = '${dbname}';
+\$conf['memcache_key_prefix'] = '${dbname}' . '_';
+\$settings['memcache']['servers'] = \$conf['memcache_servers'];
+\$settings['memcache']['key_prefix'] = \$conf['memcache_key_prefix'];
+
 
 # To DISABLE memcahe on a site that already has it, uncomment the following:
 #unset(\$conf['cache_inc']);
+#\$settings["cache"]["default"] = "cache.backend.database";
 
 # To ENABLE memcache on a site that does not already has it enabled, uncomment this:
 #\$conf['cache_backends'][] = './sites/all/modules/contrib/memcache/memcache.inc';
 #\$conf['cache_default_class'] = 'MemCacheDrupal';
 #\$conf['cache_class_cache_form'] = 'DrupalDatabaseCache';
+
+# Completely disable APCU/Memcache caching in D8 by uncommenting the following:
+#\$settings['cache']['default'] = 'cache.backend.database';
+#\$settings['cache']['bins']['bootstrap'] = 'cache.backend.database';
+#\$settings['cache']['bins']['discovery'] = 'cache.backend.database';
+#\$settings['cache']['bins']['config'] = 'cache.backend.database';
+#\$settings['class_loader_auto_detect'] = FALSE;
 #####################
 
 ######################
@@ -229,9 +245,52 @@ ini_set('display_startup_errors', TRUE);
 # $conf['mail_system'] = array('default-system' => 'DevelMailLog');
 ######################
 
+######################
+# Acquia environment
+#\$_ENV["AH_SITE_ENVIRONMENT"] = "dev";
+#\$_ENV["AH_SITE_GROUP"] = "${sitename}";
+
+######################
+# Acquia Search override
+#
+\$solr_conf = [ 'host' => 'useast1-c26.acquia-search.com', 'id' => 'ABIR-36398.dev.solr4', 'key' => '039fea043277909a084bba937a22e0b4d2ccd296' ];
+### D7 Apachesolr
+#\$conf['apachesolr_environments']['acquia_search_server_1']['url'] = 'http://' . $solr_conf['host'] . '/solr/' . $solr_conf['id'];
+#\$conf['apachesolr_environments']['acquia_search_server_1']['conf']['acquia_search_key'] = $solr_conf['key'];
+#
+### D8 Search API Solr
+#\$config['acquia_search.settings']['connection_override'] = [
+#  'host' => \$solr_conf['host'],
+#  'index_id' => \$solr_conf['id'],
+#  'derived_key' => \$solr_conf['key'],
+#  'scheme' => 'http',
+#  'port' => 80,
+#];
+### V3 Search
+#\$config['acquia_search_solr.settings']['override_search_core'] = 'ABIR-36398.dev.eeagarza';
+######################
+
 ////////////////////////////////////////////////////////////////
 
 EOF
+
+  # If BLT exists, make some adjustments
+  if [ -r $docroot/../blt ]
+  then
+    echo "${COLOR_YELLOW}BLT install found, configuring files in $docroot/sites/${sitefolder}/settings...${COLOR_NONE}"
+    if [ -r $docroot/sites/$sitefolder/settings/trusted_host.settings.php ]
+    then
+      echo '$settings["trusted_host_patterns"][] = "^local..*";' >>$docroot/sites/$sitefolder/settings/trusted_host.settings.php
+    fi
+    if [ -r $docroot/sites/$sitefolder/settings/local.settings.php ]
+    then
+      mv $docroot/sites/$sitefolder/settings/local.settings.php $docroot/sites/$sitefolder/settings/local.settings.php-RENAMED-BY-CLONE-ACQUIA-SITE
+    fi
+    # Make sites/[site]/settings/local.settings.php link to the file we just wrote above.
+    ln -s $dest_dir_site/${ac_db_name}-settings.inc $docroot/sites/$sitefolder/settings/local.settings.php
+    echo "  $docroot/sites/$sitefolder/settings/local.settings.php points to ${ac_db_name}-settings.inc"
+  fi
+  
   echo "Done!"
   echo ""
 }
